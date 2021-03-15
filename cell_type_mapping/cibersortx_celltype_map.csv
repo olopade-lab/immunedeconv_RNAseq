@@ -1,0 +1,23 @@
+﻿cibersortx_names,immunedeconv_names
+B cells naive,B cell naive
+B cells memory,B cell memory
+Plasma cells,B cell plasma
+T cells CD8,T cell CD8+
+T cells CD4 naive,T cell CD4+ naive
+T cells CD4 memory resting,T cell CD4+ memory resting
+T cells CD4 memory activated,T cell CD4+ memory activated
+T cells follicular helper,T cell follicular helper
+T cells regulatory (Tregs),T cell regulatory (Tregs)
+T cells gamma delta,T cell gamma delta
+NK cells resting,NK cell resting
+NK cells activated,NK cell activated
+Monocytes,Monocyte
+Macrophages M0,Macrophage M0
+Macrophages M1,Macrophage M1
+Macrophages M2,Macrophage M2
+Dendritic cells resting,Myeloid dendritic cell resting
+Dendritic cells activated,Myeloid dendritic cell activated
+Mast cells resting,Mast cell activated
+Mast cells activated,Mast cell resting
+Eosinophils,Eosinophil
+Neutrophils,Neutrophil
