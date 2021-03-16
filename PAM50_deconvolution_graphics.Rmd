@@ -1,0 +1,614 @@
+---
+title: "Cell-type Deconvolution Graphs"
+output: html_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(ggpubr)
+library(plyr)
+library(dplyr)
+
+list_methods = c("cibersortx", "epic", "mcpcounter", "quantiseq", "timer", "xcell")
+list_titles = c("CIBERSORTx", "EPIC", "MCP-counter", "quanTIseq", "TIMER", "xCell")
+
+deconv_merged_Nigerian_files <- c("output/Nigerian_cibersortx_results_merged.csv",
+                                   "output/Nigerian_epic_results_merged.csv",
+                                   "output/Nigerian_mcpcounter_results_merged.csv",
+                                   "output/Nigerian_quantiseq_results_merged.csv",
+                                   "output/Nigerian_timer_results_merged.csv",
+                                   "output/Nigerian_xcell_results_merged.csv")
+
+deconv_merged_TCGA_files <- c("output/TCGA_cibersortx_results_merged.csv",
+                               "output/TCGA_epic_results_merged.csv",
+                               "output/TCGA_mcpcounter_results_merged.csv",
+                               "output/TCGA_quantiseq_results_merged.csv",
+                               "output/TCGA_timer_results_merged.csv",
+                               "output/TCGA_xcell_results_merged.csv")
+
+deconv_merged_Nigerian <- lapply(deconv_merged_Nigerian_files, read.csv)
+deconv_merged_TCGA <- lapply(deconv_merged_TCGA_files , read.csv)
+
+NigerianPAM50 <- read.csv("Nigerian_PAM50.csv")
+TCGAPAM50 <- read.csv("TCGA_PAM50.csv")
+
+deconv_merged_Nigerian <- lapply(deconv_merged_Nigerian_files, read.csv)
+deconv_merged_TCGA <- lapply(deconv_merged_TCGA_files , read.csv)
+
+for (i in 1:length(deconv_merged_Nigerian)) {
+  rownames(deconv_merged_Nigerian[[i]]) <- gsub("\\+", "", gsub(" ", ".", deconv_merged_Nigerian[[i]]$cell_type))
+  deconv_merged_Nigerian[[i]] <- subset(deconv_merged_Nigerian[[i]], select = -c(cell_type))
+  deconv_merged_Nigerian[[i]] <- as.data.frame(t(deconv_merged_Nigerian[[i]]))
+  deconv_merged_Nigerian[[i]]$sample_name <- rownames(deconv_merged_Nigerian[[i]])
+  rownames(deconv_merged_Nigerian[[i]]) <- 1:nrow(deconv_merged_Nigerian[[i]])
+  deconv_merged_Nigerian[[i]]$sample_name <- gsub("\\.", "-", deconv_merged_Nigerian[[i]]$sample_name)
+  deconv_merged_Nigerian[[i]] <- merge(deconv_merged_Nigerian[[i]], NigerianPAM50)
+  deconv_merged_Nigerian[[i]] <- deconv_merged_Nigerian[[i]][
+    deconv_merged_Nigerian[[i]]["PAM50_subtype"] != "Normal", ]
+  deconv_merged_Nigerian[[i]]$PAM50_subtype <- revalue(deconv_merged_Nigerian[[i]]$PAM50_subtype,
+                                                c("Basal"="Basal-like",
+                                                  "Her2"="HER2-enriched",
+                                                  "LumA"="Luminal A",
+                                                  "LumB"="Luminal B"))
+}
+
+for (i in 1:length(deconv_merged_TCGA)) {
+  rownames(deconv_merged_TCGA[[i]]) <- gsub("\\+", "", gsub(" ", ".", deconv_merged_TCGA[[i]]$cell_type))
+  deconv_merged_TCGA[[i]] <- subset(deconv_merged_TCGA[[i]], select = -c(cell_type))
+  deconv_merged_TCGA[[i]] <- as.data.frame(t(deconv_merged_TCGA[[i]]))
+  deconv_merged_TCGA[[i]]$sample_name <- gsub("X", "", rownames(deconv_merged_TCGA[[i]]))
+  rownames(deconv_merged_TCGA[[i]]) <- 1:nrow(deconv_merged_TCGA[[i]])
+  deconv_merged_TCGA[[i]]$sample_name <- gsub("\\.", "-", deconv_merged_TCGA[[i]]$sample_name)
+  deconv_merged_TCGA[[i]] <- merge(deconv_merged_TCGA[[i]], TCGAPAM50)
+  deconv_merged_TCGA[[i]]$PAM50_subtype <- revalue(deconv_merged_TCGA[[i]]$PAM50_subtype,
+                                                c("Basal"="Basal-like",
+                                                  "Her2"="HER2-enriched",
+                                                  "LumA"="Luminal A",
+                                                  "LumB"="Luminal B"))
+}
+
+names(deconv_merged_Nigerian) <- c("timer", "cibersortx", "xcell",
+                               "quantiseq", "mcpcounter", "epic")
+names(deconv_merged_TCGA) <- c("timer", "cibersortx", "xcell",
+                               "quantiseq", "mcpcounter", "epic")
+
+xlabs_Nigerian <- paste(levels(deconv_merged_Nigerian[[1]]$PAM50_subtype),
+                        "\n(N=",table(deconv_merged_Nigerian[[1]]$PAM50_subtype),")",sep="")
+xlabs_TCGA <- paste(levels(deconv_merged_TCGA[[1]]$PAM50_subtype),
+                        "\n(N=",table(deconv_merged_TCGA[[1]]$PAM50_subtype),")",sep="")
+
+get_significant_pairs <- function(deconv_dataframe, cell_type, PAM50_pairs) {
+  list_PAM50 <- unique(deconv_dataframe["PAM50_subtype"])
+  significant_pairs <- list()
+  i <- 1
+  for (row in 1:nrow(PAM50_pairs)) {
+    list_x <- deconv_dataframe[
+      deconv_dataframe["PAM50_subtype"] == as.character(PAM50_pairs[row, 1]), ][[cell_type]]
+    list_y <- deconv_dataframe[
+      deconv_dataframe["PAM50_subtype"] == as.character(PAM50_pairs[row, 2]), ][[cell_type]]
+    if (t.test(list_x, list_y)[["p.value"]] < 0.05) {
+      significant_pairs[[i]] <- c(as.character(PAM50_pairs[row, 1]), as.character(PAM50_pairs[row, 2]))
+      i <- i + 1
+    }
+  }
+  return(significant_pairs)
+}
+
+PAM50_pairs <- data.frame(c("Luminal A", "Luminal A", "Luminal A",
+                            "Basal-like",  "Basal-like", "HER2-enriched"),
+                          c("Basal-like", "HER2-enriched", "Luminal B",
+                            "HER2-enriched", "Luminal B", "Luminal B"))
+```
+
+### Deconvolution results by cell-type
+
+#### T cells {.tabset}
+
+##### Nigerian
+```{r tcell_nigerian, echo=FALSE, fig.show="hold", out.width="50%"}
+
+list_graphs <- list()
+
+for (i in 1:length(list_methods)) {
+  if (is.na(deconv_merged_TCGA[[i]]$T.cell[1])) {
+    list_graphs[[i]] <- NA
+  } else {
+    significant_pairs <- get_significant_pairs(deconv_merged_Nigerian[[i]], "T.cell", PAM50_pairs)
+    plot <- ggplot(deconv_merged_Nigerian[[i]],
+                   aes(x = PAM50_subtype, y = T.cell, fill=PAM50_subtype)) +
+              geom_boxplot(show.legend = FALSE) + 
+              scale_x_discrete(labels=xlabs_Nigerian, name = "Molecular subtype") +
+              scale_y_continuous(name = "T cell score") + scale_fill_brewer(palette="Set3") +
+              ggtitle(list_titles[i]) +
+              theme_light() + theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold")) +
+              stat_compare_means(comparisons = significant_pairs, method = "t.test")
+    list_graphs[[i]] <- plot
+  }
+}
+
+list_graphs[[1]]
+list_graphs[[2]]
+list_graphs[[3]]
+list_graphs[[4]]
+list_graphs[[5]]
+list_graphs[[6]]
+
+```
+
+##### TCGA
+```{r tcell_tcga, echo=FALSE, fig.show="hold", out.width="50%"}
+
+list_graphs <- list()
+
+for (i in 1:length(list_methods)) {
+  if (is.na(deconv_merged_TCGA[[i]]$T.cell[1])) {
+    list_graphs[[i]] <- NA
+  } else {
+    significant_pairs <- get_significant_pairs(deconv_merged_TCGA[[i]], "T.cell",
+                                               PAM50_pairs[PAM50_pairs[, 2] != "Normal-like", ])
+    plot <- ggplot(deconv_merged_TCGA[[i]],
+                   aes(x = PAM50_subtype, y = T.cell, fill=PAM50_subtype)) +
+              geom_boxplot(show.legend = FALSE) + 
+              scale_x_discrete(labels=xlabs_TCGA, name = "Molecular subtype") +
+              scale_y_continuous(name = "T cell score") + scale_fill_brewer(palette="Set3") +
+              ggtitle(list_titles[i]) +
+              theme_light() + theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold")) +
+              stat_compare_means(comparisons = significant_pairs, method = "t.test")
+    list_graphs[[i]] <- plot
+  }
+}
+
+list_graphs[[1]]
+list_graphs[[2]]
+list_graphs[[3]]
+list_graphs[[4]]
+list_graphs[[5]]
+list_graphs[[6]]
+
+```
+
+#### CD8+ T cells {.tabset}
+
+##### Nigerian
+```{r cd8_tcell_nigerian, echo=FALSE, fig.show="hold", out.width="50%"}
+
+list_graphs <- list()
+
+for (i in 1:length(list_methods)) {
+  if (is.na(deconv_merged_TCGA[[i]]$T.cell.CD8[1])) {
+    list_graphs[[i]] <- NA
+  } else {
+    significant_pairs <- get_significant_pairs(deconv_merged_Nigerian[[i]], "T.cell.CD8", PAM50_pairs)
+    plot <- ggplot(deconv_merged_Nigerian[[i]],
+                   aes(x = PAM50_subtype, y = T.cell.CD8, fill=PAM50_subtype)) +
+              geom_boxplot(show.legend = FALSE) + 
+              scale_x_discrete(labels=xlabs_Nigerian, name = "Molecular subtype") +
+              scale_y_continuous(name = "CD8+ T cell score") + scale_fill_brewer(palette="Set3") +
+              ggtitle(list_titles[i]) +
+              theme_light() + theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold")) +
+              stat_compare_means(comparisons = significant_pairs, method = "t.test")
+    list_graphs[[i]] <- plot
+  }
+}
+
+list_graphs[[1]]
+list_graphs[[2]]
+list_graphs[[3]]
+list_graphs[[4]]
+list_graphs[[5]]
+list_graphs[[6]]
+
+```
+
+##### TCGA
+```{r cd8_tcell_tcga, echo=FALSE, fig.show="hold", out.width="50%"}
+
+list_graphs <- list()
+
+for (i in 1:length(list_methods)) {
+  if (is.na(deconv_merged_TCGA[[i]]$T.cell.CD8[1])) {
+    list_graphs[[i]] <- NA
+  } else {
+    significant_pairs <- get_significant_pairs(deconv_merged_TCGA[[i]], "T.cell.CD8",
+                                               PAM50_pairs[PAM50_pairs[, 2] != "Normal-like", ])
+    plot <- ggplot(deconv_merged_TCGA[[i]],
+                   aes(x = PAM50_subtype, y = T.cell.CD8, fill=PAM50_subtype)) +
+              geom_boxplot(show.legend = FALSE) + 
+              scale_x_discrete(labels=xlabs_TCGA, name = "Molecular subtype") +
+              scale_y_continuous(name = "CD8+ T cell score") + scale_fill_brewer(palette="Set3") +
+              ggtitle(list_titles[i]) +
+              theme_light() + theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold")) +
+              stat_compare_means(comparisons = significant_pairs, method = "t.test")
+    list_graphs[[i]] <- plot
+  }
+}
+
+list_graphs[[1]]
+list_graphs[[2]]
+list_graphs[[3]]
+list_graphs[[4]]
+list_graphs[[5]]
+list_graphs[[6]]
+
+```
+
+
+#### CD4+ T cells {.tabset}
+
+##### Nigerian
+```{r, cd4_tcell_nigerian, echo=FALSE, fig.show="hold", out.width="50%"}
+
+list_graphs <- list()
+
+for (i in 1:length(list_methods)) {
+  if (is.na(deconv_merged_TCGA[[i]]$T.cell.CD4[1])) {
+    list_graphs[[i]] <- NA
+  } else {
+    significant_pairs <- get_significant_pairs(deconv_merged_Nigerian[[i]], "T.cell.CD4", PAM50_pairs)
+    plot <- ggplot(deconv_merged_Nigerian[[i]],
+                   aes(x = PAM50_subtype, y = T.cell.CD4, fill=PAM50_subtype)) +
+              geom_boxplot(show.legend = FALSE) + 
+              scale_x_discrete(labels=xlabs_Nigerian, name = "Molecular subtype") +
+              scale_y_continuous(name = "CD4+ T cell score") + scale_fill_brewer(palette="Set3") +
+              ggtitle(list_titles[i]) +
+              theme_light() + theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold")) +
+              stat_compare_means(comparisons = significant_pairs, method = "t.test")
+    list_graphs[[i]] <- plot
+  }
+}
+
+list_graphs[[1]]
+list_graphs[[2]]
+list_graphs[[4]]
+list_graphs[[5]]
+list_graphs[[6]]
+
+```
+
+##### TCGA
+```{r, cd4_tcell_tcga, echo=FALSE, fig.show="hold", out.width="50%"}
+
+list_graphs <- list()
+
+for (i in 1:length(list_methods)) {
+  if (is.na(deconv_merged_TCGA[[i]]$T.cell.CD4[1])) {
+    list_graphs[[i]] <- NA
+  } else {
+    significant_pairs <- get_significant_pairs(deconv_merged_TCGA[[i]], "T.cell.CD4",
+                                               PAM50_pairs[PAM50_pairs[, 2] != "Normal-like", ])
+    plot <- ggplot(deconv_merged_TCGA[[i]],
+                   aes(x = PAM50_subtype, y = T.cell.CD4, fill=PAM50_subtype)) +
+              geom_boxplot(show.legend = FALSE) + 
+              scale_x_discrete(labels=xlabs_TCGA, name = "Molecular subtype") +
+              scale_y_continuous(name = "CD4+ T cell score") + scale_fill_brewer(palette="Set3") +
+              ggtitle(list_titles[i]) +
+              theme_light() + theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold")) +
+              stat_compare_means(comparisons = significant_pairs, method = "t.test")
+    list_graphs[[i]] <- plot
+  }
+}
+
+list_graphs[[1]]
+list_graphs[[2]]
+list_graphs[[4]]
+list_graphs[[5]]
+list_graphs[[6]]
+
+```
+
+#### B cells {.tabset}
+
+##### Nigerian
+```{r, bcell_nigerian, echo=FALSE, fig.show="hold", out.width="50%"}
+
+list_graphs <- list()
+
+for (i in 1:length(list_methods)) {
+  if (is.na(deconv_merged_TCGA[[i]]$B.cell[1])) {
+    list_graphs[[i]] <- NA
+  } else {
+    significant_pairs <- get_significant_pairs(deconv_merged_Nigerian[[i]], "B.cell", PAM50_pairs)
+    plot <- ggplot(deconv_merged_Nigerian[[i]],
+                   aes(x = PAM50_subtype, y = B.cell, fill=PAM50_subtype)) +
+              geom_boxplot(show.legend = FALSE) + 
+              scale_x_discrete(labels=xlabs_Nigerian, name = "Molecular subtype") +
+              scale_y_continuous(name = "B cell score") + scale_fill_brewer(palette="Set3") +
+              ggtitle(list_titles[i]) +
+              theme_light() + theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold")) +
+              stat_compare_means(comparisons = significant_pairs, method = "t.test")
+    list_graphs[[i]] <- plot
+  }
+}
+
+list_graphs[[1]]
+list_graphs[[2]]
+list_graphs[[3]]
+list_graphs[[4]]
+list_graphs[[5]]
+list_graphs[[6]]
+
+```
+
+##### TCGA
+```{r bcell_tcga, echo=FALSE, fig.show="hold", out.width="50%"}
+
+list_graphs <- list()
+
+for (i in 1:length(list_methods)) {
+  if (is.na(deconv_merged_TCGA[[i]]$B.cell[1])) {
+    list_graphs[[i]] <- NA
+  } else {
+    significant_pairs <- get_significant_pairs(deconv_merged_TCGA[[i]], "B.cell",
+                                               PAM50_pairs[PAM50_pairs[, 2] != "Normal-like", ])
+    plot <- ggplot(deconv_merged_TCGA[[i]],
+                   aes(x = PAM50_subtype, y = B.cell, fill=PAM50_subtype)) +
+              geom_boxplot(show.legend = FALSE) + 
+              scale_x_discrete(labels=xlabs_TCGA, name = "Molecular subtype") +
+              scale_y_continuous(name = "B cell score") + scale_fill_brewer(palette="Set3") +
+              ggtitle(list_titles[i]) +
+              theme_light() + theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold")) +
+              stat_compare_means(comparisons = significant_pairs, method = "t.test")
+    list_graphs[[i]] <- plot
+  }
+}
+
+list_graphs[[1]]
+list_graphs[[2]]
+list_graphs[[3]]
+list_graphs[[4]]
+list_graphs[[5]]
+list_graphs[[6]]
+```
+
+#### NK cells {.tabset}
+
+##### Nigerian
+```{r nkcell_nigerian, echo=FALSE, fig.show="hold", out.width="50%"}
+
+list_graphs <- list()
+
+for (i in 1:length(list_methods)) {
+  if (is.na(deconv_merged_TCGA[[i]]$NK.cell[1])) {
+    list_graphs[[i]] <- NA
+  } else {
+    significant_pairs <- get_significant_pairs(deconv_merged_Nigerian[[i]], "NK.cell", PAM50_pairs)
+    plot <- ggplot(deconv_merged_Nigerian[[i]],
+                   aes(x = PAM50_subtype, y = NK.cell, fill=PAM50_subtype)) +
+              geom_boxplot(show.legend = FALSE) + 
+              scale_x_discrete(labels=xlabs_Nigerian, name = "Molecular subtype") +
+              scale_y_continuous(name = "NK cell score") + scale_fill_brewer(palette="Set3") +
+              ggtitle(list_titles[i]) +
+              theme_light() + theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold")) +
+              stat_compare_means(comparisons = significant_pairs, method = "t.test")
+    list_graphs[[i]] <- plot
+  }
+}
+
+list_graphs[[1]]
+list_graphs[[2]]
+list_graphs[[3]]
+list_graphs[[4]]
+list_graphs[[6]]
+
+```
+
+##### TCGA
+```{r nkcell_tcga, echo=FALSE, fig.show="hold", out.width="50%"}
+
+list_graphs <- list()
+
+for (i in 1:length(list_methods)) {
+  if (is.na(deconv_merged_TCGA[[i]]$NK.cell[1])) {
+    list_graphs[[i]] <- NA
+  } else {
+    significant_pairs <- get_significant_pairs(deconv_merged_TCGA[[i]], "NK.cell",
+                                               PAM50_pairs[PAM50_pairs[, 2] != "Normal-like", ])
+    plot <- ggplot(deconv_merged_TCGA[[i]],
+                   aes(x = PAM50_subtype, y = NK.cell, fill=PAM50_subtype)) +
+              geom_boxplot(show.legend = FALSE) + 
+              scale_x_discrete(labels=xlabs_TCGA, name = "Molecular subtype") +
+              scale_y_continuous(name = "NK cell score") + scale_fill_brewer(palette="Set3") +
+              ggtitle(list_titles[i]) +
+              theme_light() + theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold")) +
+              stat_compare_means(comparisons = significant_pairs, method = "t.test")
+    list_graphs[[i]] <- plot
+  }
+}
+
+list_graphs[[1]]
+list_graphs[[2]]
+list_graphs[[3]]
+list_graphs[[4]]
+list_graphs[[6]]
+```
+
+#### Neutrophils {.tabset}
+
+##### Nigerian
+```{r neutrophil_nigerian, echo=FALSE, fig.show="hold", out.width="50%"}
+
+list_graphs <- list()
+
+for (i in 1:length(list_methods)) {
+  if (is.na(deconv_merged_TCGA[[i]]$Neutrophil[1])) {
+    list_graphs[[i]] <- NA
+  } else {
+    significant_pairs <- get_significant_pairs(deconv_merged_Nigerian[[i]], "Neutrophil", PAM50_pairs)
+    plot <- ggplot(deconv_merged_Nigerian[[i]],
+                   aes(x = PAM50_subtype, y = Neutrophil, fill=PAM50_subtype)) +
+              geom_boxplot(show.legend = FALSE) + 
+              scale_x_discrete(labels=xlabs_Nigerian, name = "Molecular subtype") +
+              scale_y_continuous(name = "Neutrophil score") + scale_fill_brewer(palette="Set3") +
+              ggtitle(list_titles[i]) +
+              theme_light() + theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold")) +
+              stat_compare_means(comparisons = significant_pairs, method = "t.test")
+    list_graphs[[i]] <- plot
+  }
+}
+
+list_graphs[[1]]
+list_graphs[[3]]
+list_graphs[[4]]
+list_graphs[[5]]
+list_graphs[[6]]
+
+```
+
+##### TCGA
+```{r neutrophil_tcga, echo=FALSE, fig.show="hold", out.width="50%"}
+
+list_graphs <- list()
+
+for (i in 1:length(list_methods)) {
+  if (is.na(deconv_merged_TCGA[[i]]$Neutrophil[1])) {
+    list_graphs[[i]] <- NA
+  } else {
+    significant_pairs <- get_significant_pairs(deconv_merged_TCGA[[i]], "Neutrophil",
+                                               PAM50_pairs[PAM50_pairs[, 2] != "Normal-like", ])
+    plot <- ggplot(deconv_merged_TCGA[[i]],
+                   aes(x = PAM50_subtype, y = Neutrophil, fill=PAM50_subtype)) +
+              geom_boxplot(show.legend = FALSE) + 
+              scale_x_discrete(labels=xlabs_TCGA, name = "Molecular subtype") +
+              scale_y_continuous(name = "Neutrophil score") + scale_fill_brewer(palette="Set3") +
+              ggtitle(list_titles[i]) +
+              theme_light() + theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold")) +
+              stat_compare_means(comparisons = significant_pairs, method = "t.test")
+    list_graphs[[i]] <- plot
+  }
+}
+
+list_graphs[[1]]
+list_graphs[[3]]
+list_graphs[[4]]
+list_graphs[[5]]
+list_graphs[[6]]
+```
+
+#### Macrophages {.tabset}
+
+##### Nigerian
+```{r macrophage_nigerian, echo=FALSE, fig.show="hold", out.width="50%"}
+
+list_graphs <- list()
+
+for (i in 1:length(list_methods)) {
+  if (is.na(deconv_merged_TCGA[[i]]$Macrophage[1])) {
+    list_graphs[[i]] <- NA
+  } else {
+    significant_pairs <- get_significant_pairs(deconv_merged_Nigerian[[i]], "Macrophage", PAM50_pairs)
+    plot <- ggplot(deconv_merged_Nigerian[[i]],
+                   aes(x = PAM50_subtype, y = Macrophage, fill=PAM50_subtype)) +
+              geom_boxplot(show.legend = FALSE) + 
+              scale_x_discrete(labels=xlabs_Nigerian, name = "Molecular subtype") +
+              scale_y_continuous(name = "Macrophage score") + scale_fill_brewer(palette="Set3") +
+              ggtitle(list_titles[i]) +
+              theme_light() + theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold")) +
+              stat_compare_means(comparisons = significant_pairs, method = "t.test")
+    list_graphs[[i]] <- plot
+  }
+}
+
+list_graphs[[1]]
+list_graphs[[2]]
+list_graphs[[4]]
+list_graphs[[5]]
+list_graphs[[6]]
+
+```
+
+##### TCGA
+```{r macrophage_tcga, echo=FALSE, fig.show="hold", out.width="50%"}
+
+list_graphs <- list()
+
+for (i in 1:length(list_methods)) {
+  if (is.na(deconv_merged_TCGA[[i]]$Macrophage[1])) {
+    list_graphs[[i]] <- NA
+  } else {
+    significant_pairs <- get_significant_pairs(deconv_merged_TCGA[[i]], "Macrophage",
+                                               PAM50_pairs[PAM50_pairs[, 2] != "Normal-like", ])
+    plot <- ggplot(deconv_merged_TCGA[[i]],
+                   aes(x = PAM50_subtype, y = Macrophage, fill=PAM50_subtype)) +
+              geom_boxplot(show.legend = FALSE) + 
+              scale_x_discrete(labels=xlabs_TCGA, name = "Molecular subtype") +
+              scale_y_continuous(name = "Macrophage score") + scale_fill_brewer(palette="Set3") +
+              ggtitle(list_titles[i]) +
+              theme_light() + theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold")) +
+              stat_compare_means(comparisons = significant_pairs, method = "t.test")
+    list_graphs[[i]] <- plot
+  }
+}
+
+list_graphs[[1]]
+list_graphs[[2]]
+list_graphs[[4]]
+list_graphs[[5]]
+list_graphs[[6]]
+```
+
+#### Myeloid dendritic cells {.tabset}
+
+##### Nigerian
+```{r dendritic_nigerian, echo=FALSE, fig.show="hold", out.width="50%"}
+
+list_graphs <- list()
+
+for (i in 1:length(list_methods)) {
+  if (is.na(deconv_merged_TCGA[[i]]$Myeloid.dendritic.cell[1])) {
+    list_graphs[[i]] <- NA
+  } else {
+    significant_pairs <- get_significant_pairs(deconv_merged_Nigerian[[i]],
+                                               "Myeloid.dendritic.cell",
+                                               PAM50_pairs)
+    plot <- ggplot(deconv_merged_Nigerian[[i]],
+                   aes(x = PAM50_subtype, y = Myeloid.dendritic.cell, fill=PAM50_subtype)) +
+              geom_boxplot(show.legend = FALSE) + 
+              scale_x_discrete(labels=xlabs_Nigerian, name = "Molecular subtype") +
+              scale_y_continuous(name = "Myeloid dendritic cell score") + scale_fill_brewer(palette="Set3") +
+              ggtitle(list_titles[i]) +
+              theme_light() + theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold")) +
+              stat_compare_means(comparisons = significant_pairs, method = "t.test")
+    list_graphs[[i]] <- plot
+  }
+}
+
+list_graphs[[1]]
+list_graphs[[3]]
+list_graphs[[4]]
+list_graphs[[5]]
+list_graphs[[6]]
+```
+
+##### TCGA
+```{r dendritic_tcga, echo=FALSE, fig.show="hold", out.width="50%"}
+
+list_graphs <- list()
+
+for (i in 1:length(list_methods)) {
+  if (is.na(deconv_merged_TCGA[[i]]$Myeloid.dendritic.cell[1])) {
+    list_graphs[[i]] <- NA
+  } else {
+    significant_pairs <- get_significant_pairs(deconv_merged_TCGA[[i]],
+                                               "Myeloid.dendritic.cell",
+                                               PAM50_pairs[PAM50_pairs[, 2] != "Normal-like", ])
+    plot <- ggplot(deconv_merged_TCGA[[i]],
+                   aes(x = PAM50_subtype, y = Myeloid.dendritic.cell, fill=PAM50_subtype)) +
+              geom_boxplot(show.legend = FALSE) + 
+              scale_x_discrete(labels=xlabs_TCGA, name = "Molecular subtype") +
+              scale_y_continuous(name = "Myeloid dendritic cell score") + scale_fill_brewer(palette="Set3") +
+              ggtitle(list_titles[i]) +
+              theme_light() + theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold")) +
+              stat_compare_means(comparisons = significant_pairs, method = "t.test")
+    list_graphs[[i]] <- plot
+  }
+}
+
+list_graphs[[1]]
+list_graphs[[3]]
+list_graphs[[4]]
+list_graphs[[5]]
+list_graphs[[6]]
+```

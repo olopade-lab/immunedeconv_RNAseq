@@ -1,0 +1,343 @@
+---
+title: "Cell-type Deconvolution Graphs"
+output: github_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(ggpubr)
+library(plyr)
+library(dplyr)
+
+list_methods = c("cibersortx", "epic", "mcpcounter", "quantiseq", "timer", "xcell")
+list_titles = c("CIBERSORTx", "EPIC", "MCP-counter", "quanTIseq", "TIMER", "xCell")
+
+deconv_merged_Nigerian_files <- c("output/Nigerian_cibersortx_results_merged.csv",
+                                   "output/Nigerian_epic_results_merged.csv",
+                                   "output/Nigerian_mcpcounter_results_merged.csv",
+                                   "output/Nigerian_quantiseq_results_merged.csv",
+                                   "output/Nigerian_timer_results_merged.csv",
+                                   "output/Nigerian_xcell_results_merged.csv")
+
+deconv_merged_TCGA_files <- c("output/TCGA_cibersortx_results_merged.csv",
+                               "output/TCGA_epic_results_merged.csv",
+                               "output/TCGA_mcpcounter_results_merged.csv",
+                               "output/TCGA_quantiseq_results_merged.csv",
+                               "output/TCGA_timer_results_merged.csv",
+                               "output/TCGA_xcell_results_merged.csv")
+
+NigerianPAM50 <- read.csv("Nigerian_PAM50.csv")
+TCGAPAM50 <- read.csv("TCGA_PAM50.csv")
+
+deconv_merged_Nigerian <- lapply(deconv_merged_Nigerian_files, read.csv)
+deconv_merged_TCGA <- lapply(deconv_merged_TCGA_files , read.csv)
+deconv_merged <- list()
+
+for (i in 1:length(list_methods)) {
+  rownames(deconv_merged_Nigerian[[i]]) <- gsub("\\+", "", gsub(" ", ".", deconv_merged_Nigerian[[i]]$cell_type))
+  deconv_merged_Nigerian[[i]] <- subset(deconv_merged_Nigerian[[i]], select = -c(cell_type))
+  deconv_merged_Nigerian[[i]] <- as.data.frame(t(deconv_merged_Nigerian[[i]]))
+  deconv_merged_Nigerian[[i]]$sample_name <- rownames(deconv_merged_Nigerian[[i]])
+  rownames(deconv_merged_Nigerian[[i]]) <- 1:nrow(deconv_merged_Nigerian[[i]])
+  deconv_merged_Nigerian[[i]]$sample_name <- gsub("\\.", "-", deconv_merged_Nigerian[[i]]$sample_name)
+  deconv_merged_Nigerian[[i]] <- merge(deconv_merged_Nigerian[[i]], NigerianPAM50)
+  deconv_merged_Nigerian[[i]] <- deconv_merged_Nigerian[[i]][
+    deconv_merged_Nigerian[[i]]["PAM50_subtype"] == "Basal", ]
+  
+  rownames(deconv_merged_TCGA[[i]]) <- gsub("\\+", "", gsub(" ", ".", deconv_merged_TCGA[[i]]$cell_type))
+  deconv_merged_TCGA[[i]] <- subset(deconv_merged_TCGA[[i]], select = -c(cell_type))
+  deconv_merged_TCGA[[i]] <- as.data.frame(t(deconv_merged_TCGA[[i]]))
+  deconv_merged_TCGA[[i]]$sample_name <- gsub("X", "", rownames(deconv_merged_TCGA[[i]]))
+  rownames(deconv_merged_TCGA[[i]]) <- 1:nrow(deconv_merged_TCGA[[i]])
+  deconv_merged_TCGA[[i]]$sample_name <- gsub("\\.", "-", deconv_merged_TCGA[[i]]$sample_name)
+  deconv_merged_TCGA[[i]] <- merge(deconv_merged_TCGA[[i]], TCGAPAM50)
+  deconv_merged_TCGA[[i]] <- deconv_merged_TCGA[[i]][
+    deconv_merged_TCGA[[i]]["PAM50_subtype"] == "Basal", ]
+  
+  deconv_merged[[i]] <- rbind(deconv_merged_Nigerian[[i]], deconv_merged_TCGA[[i]])
+}
+
+names(deconv_merged) <- list_methods
+
+xlabs <- paste(levels(deconv_merged[[1]]$group),
+                        "\n(N=",table(deconv_merged[[1]]$group),")",sep="")
+
+get_significant_pairs <- function(deconv_dataframe, cell_type, group_pairs) {
+  significant_pairs <- list()
+  i <- 1
+  for (row in 1:nrow(group_pairs)) {
+    list_x <- deconv_dataframe[
+      deconv_dataframe["group"] == as.character(group_pairs[row, 1]), ][[cell_type]]
+    list_y <- deconv_dataframe[
+      deconv_dataframe["group"] == as.character(group_pairs[row, 2]), ][[cell_type]]
+    if (t.test(list_x, list_y)[["p.value"]] < 0.05) {
+      significant_pairs[[i]] <- c(as.character(group_pairs[row, 1]), as.character(group_pairs[row, 2]))
+      i <- i + 1
+    }
+  }
+  return(significant_pairs)
+}
+
+group_pairs <- data.frame(c("Nigerian", "Nigerian", "TCGA_black"),
+                          c("TCGA_black", "TCGA_white", "TCGA_white"))
+```
+
+### Deconvolution results by cell-type
+
+#### T cells
+
+```{r tcell, echo=FALSE, fig.show="hold", out.width="50%"}
+
+list_graphs <- list()
+
+for (i in 1:length(list_methods)) {
+  if (is.na(deconv_merged[[i]]$T.cell[1])) {
+    list_graphs[[i]] <- NA
+  } else {
+    significant_pairs <- get_significant_pairs(deconv_merged[[i]], "T.cell", group_pairs)
+    plot <- ggplot(deconv_merged[[i]],
+                   aes(x = group, y = T.cell, fill = group)) +
+              geom_boxplot(show.legend = FALSE) + 
+              scale_x_discrete(labels = xlabs, name = "Group") +
+              scale_y_continuous(name = "T cell score") + scale_fill_brewer(palette="Set3") +
+              ggtitle(list_titles[i]) +
+              theme_light() + theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold")) +
+              stat_compare_means(comparisons = significant_pairs, method = "t.test")
+    list_graphs[[i]] <- plot
+  }
+}
+
+list_graphs[[1]]
+list_graphs[[2]]
+list_graphs[[3]]
+list_graphs[[4]]
+list_graphs[[5]]
+list_graphs[[6]]
+
+```
+
+#### CD8+ T cells
+
+```{r cd8_tcell, echo=FALSE, fig.show="hold", out.width="50%"}
+
+list_graphs <- list()
+
+for (i in 1:length(list_methods)) {
+  if (is.na(deconv_merged[[i]]$T.cell.CD8[1])) {
+    list_graphs[[i]] <- NA
+  } else {
+    significant_pairs <- get_significant_pairs(deconv_merged[[i]], "T.cell.CD8", group_pairs)
+    plot <- ggplot(deconv_merged[[i]],
+                   aes(x = group, y = T.cell.CD8, fill=group)) +
+              geom_boxplot(show.legend = FALSE) + 
+              scale_x_discrete(labels=xlabs, name = "Group") +
+              scale_y_continuous(name = "CD8+ T cell score") + scale_fill_brewer(palette="Set3") +
+              ggtitle(list_titles[i]) +
+              theme_light() + theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold")) +
+              stat_compare_means(comparisons = significant_pairs, method = "t.test")
+    list_graphs[[i]] <- plot
+  }
+}
+
+list_graphs[[1]]
+list_graphs[[2]]
+list_graphs[[3]]
+list_graphs[[4]]
+list_graphs[[5]]
+list_graphs[[6]]
+
+```
+
+
+#### CD4+ T cells
+
+```{r, cd4_tcell, echo=FALSE, fig.show="hold", out.width="50%"}
+
+list_graphs <- list()
+
+for (i in 1:length(list_methods)) {
+  if (is.na(deconv_merged[[i]]$T.cell.CD4[1])) {
+    list_graphs[[i]] <- NA
+  } else {
+    significant_pairs <- get_significant_pairs(deconv_merged[[i]], "T.cell.CD4", group_pairs)
+    plot <- ggplot(deconv_merged[[i]],
+                   aes(x = group, y = T.cell.CD4, fill=group)) +
+              geom_boxplot(show.legend = FALSE) + 
+              scale_x_discrete(labels=xlabs, name = "Group") +
+              scale_y_continuous(name = "CD4+ T cell score") + scale_fill_brewer(palette="Set3") +
+              ggtitle(list_titles[i]) +
+              theme_light() + theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold")) +
+              stat_compare_means(comparisons = significant_pairs, method = "t.test")
+    list_graphs[[i]] <- plot
+  }
+}
+
+list_graphs[[1]]
+list_graphs[[2]]
+list_graphs[[4]]
+list_graphs[[5]]
+list_graphs[[6]]
+
+```
+
+#### B cells
+
+```{r, bcell, echo=FALSE, fig.show="hold", out.width="50%"}
+
+list_graphs <- list()
+
+for (i in 1:length(list_methods)) {
+  if (is.na(deconv_merged[[i]]$B.cell[1])) {
+    list_graphs[[i]] <- NA
+  } else {
+    significant_pairs <- get_significant_pairs(deconv_merged[[i]], "B.cell", group_pairs)
+    plot <- ggplot(deconv_merged[[i]],
+                   aes(x = group, y = B.cell, fill=group)) +
+              geom_boxplot(show.legend = FALSE) + 
+              scale_x_discrete(labels=xlabs, name = "Group") +
+              scale_y_continuous(name = "B cell score") + scale_fill_brewer(palette="Set3") +
+              ggtitle(list_titles[i]) +
+              theme_light() + theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold")) +
+              stat_compare_means(comparisons = significant_pairs, method = "t.test")
+    list_graphs[[i]] <- plot
+  }
+}
+
+list_graphs[[1]]
+list_graphs[[2]]
+list_graphs[[3]]
+list_graphs[[4]]
+list_graphs[[5]]
+list_graphs[[6]]
+
+```
+
+
+#### NK cells
+
+```{r nkcell, echo=FALSE, fig.show="hold", out.width="50%"}
+
+list_graphs <- list()
+
+for (i in 1:length(list_methods)) {
+  if (is.na(deconv_merged[[i]]$NK.cell[1])) {
+    list_graphs[[i]] <- NA
+  } else {
+    significant_pairs <- get_significant_pairs(deconv_merged[[i]], "NK.cell", group_pairs)
+    plot <- ggplot(deconv_merged[[i]],
+                   aes(x = group, y = NK.cell, fill=group)) +
+              geom_boxplot(show.legend = FALSE) + 
+              scale_x_discrete(labels=xlabs, name = "Group") +
+              scale_y_continuous(name = "NK cell score") + scale_fill_brewer(palette="Set3") +
+              ggtitle(list_titles[i]) +
+              theme_light() + theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold")) +
+              stat_compare_means(comparisons = significant_pairs, method = "t.test")
+    list_graphs[[i]] <- plot
+  }
+}
+
+list_graphs[[1]]
+list_graphs[[2]]
+list_graphs[[3]]
+list_graphs[[4]]
+list_graphs[[6]]
+
+```
+
+
+#### Neutrophils
+
+```{r neutrophil, echo=FALSE, fig.show="hold", out.width="50%"}
+
+list_graphs <- list()
+
+for (i in 1:length(list_methods)) {
+  if (is.na(deconv_merged[[i]]$Neutrophil[1])) {
+    list_graphs[[i]] <- NA
+  } else {
+    significant_pairs <- get_significant_pairs(deconv_merged[[i]], "Neutrophil", group_pairs)
+    plot <- ggplot(deconv_merged[[i]],
+                   aes(x = group, y = Neutrophil, fill=group)) +
+              geom_boxplot(show.legend = FALSE) + 
+              scale_x_discrete(labels=xlabs, name = "Group") +
+              scale_y_continuous(name = "Neutrophil score") + scale_fill_brewer(palette="Set3") +
+              ggtitle(list_titles[i]) +
+              theme_light() + theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold")) +
+              stat_compare_means(comparisons = significant_pairs, method = "t.test")
+    list_graphs[[i]] <- plot
+  }
+}
+
+list_graphs[[1]]
+list_graphs[[3]]
+list_graphs[[4]]
+list_graphs[[5]]
+list_graphs[[6]]
+
+```
+
+#### Macrophages
+
+```{r macrophage, echo=FALSE, fig.show="hold", out.width="50%"}
+
+list_graphs <- list()
+
+for (i in 1:length(list_methods)) {
+  if (is.na(deconv_merged[[i]]$Macrophage[1])) {
+    list_graphs[[i]] <- NA
+  } else {
+    significant_pairs <- get_significant_pairs(deconv_merged[[i]], "Macrophage", group_pairs)
+    plot <- ggplot(deconv_merged[[i]],
+                   aes(x = group, y = Macrophage, fill=group)) +
+              geom_boxplot(show.legend = FALSE) + 
+              scale_x_discrete(labels=xlabs, name = "Group") +
+              scale_y_continuous(name = "Macrophage score") + scale_fill_brewer(palette="Set3") +
+              ggtitle(list_titles[i]) +
+              theme_light() + theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold")) +
+              stat_compare_means(comparisons = significant_pairs, method = "t.test")
+    list_graphs[[i]] <- plot
+  }
+}
+
+list_graphs[[1]]
+list_graphs[[2]]
+list_graphs[[4]]
+list_graphs[[5]]
+list_graphs[[6]]
+
+```
+
+#### Myeloid dendritic cells
+
+```{r dendritic, echo=FALSE, fig.show="hold", out.width="50%"}
+
+list_graphs <- list()
+
+for (i in 1:length(list_methods)) {
+  if (is.na(deconv_merged[[i]]$Myeloid.dendritic.cell[1])) {
+    list_graphs[[i]] <- NA
+  } else {
+    significant_pairs <- get_significant_pairs(deconv_merged[[i]],
+                                               "Myeloid.dendritic.cell",
+                                               group_pairs)
+    plot <- ggplot(deconv_merged[[i]],
+                   aes(x = group, y = Myeloid.dendritic.cell, fill=group)) +
+              geom_boxplot(show.legend = FALSE) + 
+              scale_x_discrete(labels=xlabs, name = "Group") +
+              scale_y_continuous(name = "Myeloid dendritic cell score") + scale_fill_brewer(palette="Set3") +
+              ggtitle(list_titles[i]) +
+              theme_light() + theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold")) +
+              stat_compare_means(comparisons = significant_pairs, method = "t.test")
+    list_graphs[[i]] <- plot
+  }
+}
+
+list_graphs[[1]]
+list_graphs[[3]]
+list_graphs[[4]]
+list_graphs[[5]]
+list_graphs[[6]]
+```
